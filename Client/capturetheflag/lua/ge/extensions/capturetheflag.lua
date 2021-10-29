@@ -187,7 +187,7 @@ local function onUpdate(dt)
 		if distMap[flagCarrierID] then
 			local beamIntensity = constrain(mapValue(distMap[flagCarrierID], 50, 500, 0, 1), 0, 1)
 			local beamcolor = ColorF(1, 0.7, 0, beamIntensity)
-			debugDrawer:drawCylinder(Point3F(pos.x, pos.y, -0.01), Point3F(pos.x, pos.y, 100), 2, beamcolor)
+			debugDrawer:drawCylinder(Point3F(pos.x, pos.y, pos.z-10), Point3F(pos.x, pos.y, pos.z+200), 2, beamcolor)
 		end
 
 		if canPickUpFlagTime < timeCounter then
@@ -344,6 +344,7 @@ local function playerWon(winnerName)
 	flagPos = nil
 	UI.showNotification("🎉 "..winnerName.." has won the game! 🎉", "CtFwon")
 	gameRunning = false
+	hideNicknames(false)
 end
 
 local function setConfig(config)
