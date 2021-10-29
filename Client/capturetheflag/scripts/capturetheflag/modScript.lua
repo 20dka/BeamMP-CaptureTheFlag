@@ -1,0 +1,2 @@
+load("capturetheflag")
+registerCoreModule("capturetheflag")
