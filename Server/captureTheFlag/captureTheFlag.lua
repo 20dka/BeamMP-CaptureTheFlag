@@ -28,7 +28,9 @@ local config = {
 
 	inactiveColor = {r=0.3, g=0.3, b=0.3},
 	activeColor = {r=1, g=1, b=0},
-	wonColor = {r=0, g=1, b=0}
+	wonColor = {r=0, g=1, b=0},
+
+	pickupTimes = { localResetCar = 10, remoteResetCar = 5, remoteTookFlag = 3, localDroppedFlag = 5, remoteDroppedFlag = 0, gameStart = 5 }
 }
 
 
@@ -72,28 +74,35 @@ function setFlagSpawnTo(playerID, data)
 end
 
 function flagExchanged(playerID, data)
+	clog(printNameWithID(playerID).." in vehicle "..data.." took the flag from "..(flagCarrierID and printNameWithID(flagCarrierID) or 'NOBODY'))
+
 	flagCarrierID = playerID
 	flagCarrierName = GetPlayerName(playerID)
-	clog(printNameWithID(playerID).." in vehicle "..data.." picked up the flag")
-	TriggerClientEventForAllExcept(playerID, "CtFremotePickedUpFlag", data)
+
+	TriggerClientEvent(-1, "CtFremoteExchangedFlag", data)
 end
 function flagPickedUp(playerID, data)
+	clog(printNameWithID(playerID).." in vehicle "..data.." picked up the flag")
+	if flagCarrierID then clog("Carrier was not nil! "..printNameWithID(flagCarrierID)) end
+
 	flagCarrierID = playerID
 	flagCarrierName = GetPlayerName(playerID)
-	clog(printNameWithID(playerID).." in vehicle "..data.." picked up the flag")
-	TriggerClientEventForAllExcept(playerID, "CtFremotePickedUpFlag", data)
+	TriggerClientEvent(-1, "CtFremotePickedUpFlag", data)
 end
-function flagDropped(playerID, data)
+function flagDropped(playerID, datastr)
 	flagCarrierID = nil
 	flagCarrierName = nil
-	clog(printNameWithID(playerID).." in vehicle "..data.." dropped the flag")
-	TriggerClientEventForAllExcept(playerID, "CtFremoteDroppedFlag", data)
+	print(datastr)
+	local data = json.decode(datastr:gsub(';',':'))
+	--print(tableToString(data))
+	--clog(printNameWithID(playerID).." in vehicle "..data.serverVehID.." dropped the flag")
+	TriggerClientEvent(-1, "CtFremoteDroppedFlag", datastr)
 end
 function removePoints(playerID, data)
 	local playerName = GetPlayerName(playerID)
 	clog(printNameWithID(playerID).." in vehicle "..data.." received a penalty of "..tostring(resetPenalty).." points")
-	points[GetPlayerName(playerID)] = points[GetPlayerName(playerID)] - resetPenalty
-	if points[GetPlayerName(playerID)] < 0 then points[GetPlayerName(playerID)] = 0 end
+	points[playerName] = points[playerName] - resetPenalty
+	if points[playerName] < 0 then points[playerName] = 0 end
 end
 
 function updateScoreboard()
@@ -122,6 +131,8 @@ function sendConfig(newcfg)
 	config.inactiveColor = newcfg.inactiveColor or config.inactiveColor
 	config.activeColor = newcfg.activeColor or config.activeColor
 	config.wonColor = newcfg.wonColor or config.wonColor
+
+	config.pickupTimes = newcfg.pickupTimes or config.pickupTimes
 
 	local cfg = json.encode(config):gsub(':',';')
 
@@ -208,7 +219,6 @@ end
 function TriggerClientEventForAllExcept(excludeID, eventName, eventData)
 	for k,v in pairs(GetPlayers()) do
 		if k ~= excludeID then
-			--print("telling "..k.." that "..excludeID.." did the thing")
 			TriggerClientEvent(k, eventName, eventData)
 		end
 	end
@@ -219,7 +229,7 @@ function tableToString(t, oneLine)
 	local str = ""
 
 	for k,v in pairs(t) do
-		str = str.." "..k.." : "..v
+		str = str.." "..k.." : ".. (type(v) == "table" and tableToString(v) or v)
 		if not oneLine then
 			str = str.."\n"
 		end
@@ -235,16 +245,27 @@ function clog(text)
 		text = tableToString(text)
 	end
 
-	print(os.date("[%d/%m/%Y %H:%M:%S]").." [captureTheFlag] "..text)
+	print(" [captureTheFlag] "..text)
 
-	if true then
+	if false then
 		file = io.open("log.txt", "a")
 		file:write(os.date("[%d/%m/%Y %H:%M:%S] ")..text.."\n")
 		file:close()
 	end
 end
 
-function printNameWithID(playerID) return GetPlayerName(playerID) or '?'.."("..playerID..")" end
+function simpletraceback(level)
+	local debuginfo = debug.getinfo(level+1) -- account for this function call
+    print("function was called from: " .. debuginfo.short_src:gsub('\\','/'):gsub(pluginPath, "") .. ":" .. debuginfo.currentline .. " inside " .. tostring(debuginfo.name) .. "()")
+end
+
+function printNameWithID(playerID)
+	if not playerID then
+		simpletraceback(2)
+		simpletraceback(3)
+	end
+	return (GetPlayerName(playerID) or '?').."("..playerID..")" 
+end
 function starts_with(str, start)
    return str:sub(1, #start) == start
 end
