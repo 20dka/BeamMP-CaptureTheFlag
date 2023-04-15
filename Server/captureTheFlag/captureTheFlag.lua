@@ -48,15 +48,15 @@ function onInit()
 	--RegisterEvent("onPlayerConnecting","onPlayerConnecting")
 	--RegisterEvent("onPlayerJoining","onPlayerJoining")
 	--RegisterEvent("onVehicleEdited","onVehicleEdited")
-	RegisterEvent("onChatMessage","onChatMessage")
+	MP.RegisterEvent("onChatMessage","onChatMessage")
 	--RegisterEvent("onVehicleDeleted","onVehicleDeleted")
-	RegisterEvent("onPlayerDisconnect","onPlayerDisconnect")
+	MP.RegisterEvent("onPlayerDisconnect","onPlayerDisconnect")
 
-	RegisterEvent("CtFsetFlagSpawnTo","setFlagSpawnTo")
-	RegisterEvent("CtFflagExchanged","flagExchanged")
-	RegisterEvent("CtFflagPickedUp","flagPickedUp")
-	RegisterEvent("CtFflagDropped","flagDropped")
-	RegisterEvent("CtFremovePoints","removePoints")
+	MP.RegisterEvent("CtFsetFlagSpawnTo","setFlagSpawnTo")
+	MP.RegisterEvent("CtFflagExchanged","flagExchanged")
+	MP.RegisterEvent("CtFflagPickedUp","flagPickedUp")
+	MP.RegisterEvent("CtFflagDropped","flagDropped")
+	MP.RegisterEvent("CtFremovePoints","removePoints")
 
 
 clog("--------------CaptureTheFlag Ready--------------", true)
@@ -68,7 +68,7 @@ function setFlagSpawnTo(playerID, data)
 	data = json.decode(data)
 
 	clog("Set the flag spawnpoint to x:"..tostring(data.x).." y:"..tostring(data.y).." z:"..tostring(data.z))
-	SendChatMessage(playerID, "Successfully set flag spawnpoint")
+	MP.SendChatMessage(playerID, "Successfully set flag spawnpoint")
 
 	sendConfig({flagSpawn = data})
 end
@@ -77,17 +77,17 @@ function flagExchanged(playerID, data)
 	clog(printNameWithID(playerID).." in vehicle "..data.." took the flag from "..(flagCarrierID and printNameWithID(flagCarrierID) or 'NOBODY'))
 
 	flagCarrierID = playerID
-	flagCarrierName = GetPlayerName(playerID)
+	flagCarrierName = MP.GetPlayerName(playerID)
 
-	TriggerClientEvent(-1, "CtFremoteExchangedFlag", data)
+	MP.TriggerClientEvent(-1, "CtFremoteExchangedFlag", data)
 end
 function flagPickedUp(playerID, data)
 	clog(printNameWithID(playerID).." in vehicle "..data.." picked up the flag")
 	if flagCarrierID then clog("Carrier was not nil! "..printNameWithID(flagCarrierID)) end
 
 	flagCarrierID = playerID
-	flagCarrierName = GetPlayerName(playerID)
-	TriggerClientEvent(-1, "CtFremotePickedUpFlag", data)
+	flagCarrierName = MP.GetPlayerName(playerID)
+	MP.TriggerClientEvent(-1, "CtFremotePickedUpFlag", data)
 end
 function flagDropped(playerID, datastr)
 	flagCarrierID = nil
@@ -96,10 +96,10 @@ function flagDropped(playerID, datastr)
 	local data = json.decode(datastr:gsub(';',':'))
 	--print(tableToString(data))
 	--clog(printNameWithID(playerID).." in vehicle "..data.serverVehID.." dropped the flag")
-	TriggerClientEvent(-1, "CtFremoteDroppedFlag", datastr)
+	MP.TriggerClientEvent(-1, "CtFremoteDroppedFlag", datastr)
 end
 function removePoints(playerID, data)
-	local playerName = GetPlayerName(playerID)
+	local playerName = MP.GetPlayerName(playerID)
 	clog(printNameWithID(playerID).." in vehicle "..data.." received a penalty of "..tostring(resetPenalty).." points")
 	points[playerName] = points[playerName] - resetPenalty
 	if points[playerName] < 0 then points[playerName] = 0 end
@@ -110,13 +110,13 @@ function updateScoreboard()
 		points[flagCarrierName] = points[flagCarrierName] + 1
 		if points[flagCarrierName] == winPoints then
 			gameWon(flagCarrierName)
-			StopThread("updateScoreboard")
+			MP.CancelEventTimer("updateScoreboard")
 		end
 	end
 	local scorestr = json.encode(points)
 	--print(scorestr)
-	for k,v in pairs(GetPlayers() or {}) do
-		TriggerClientEvent(k, "CtFreceiveScoreboard", scorestr)
+	for k,v in pairs(MP.GetPlayers() or {}) do
+		MP.TriggerClientEvent(k, "CtFreceiveScoreboard", scorestr)
 	end
 end
 
@@ -136,49 +136,57 @@ function sendConfig(newcfg)
 
 	local cfg = json.encode(config):gsub(':',';')
 
-	TriggerClientEvent(-1, "CtFsetConfig", cfg)
+	MP.TriggerClientEvent(-1, "CtFsetConfig", cfg)
 end
 
 
 function gameWon(winner)
 	clog("player "..winner.." won CtF", true)
-	TriggerClientEvent(-1, "CtFplayerWon", winner)
+	MP.TriggerClientEvent(-1, "CtFplayerWon", winner)
 	flagCarrierID = nil
 	flagCarrierName = nil
 end
 
 function doCountdown()
 	if countdownCounter <= 0 then return end
-	SendChatMessage(-1, tostring(countdownCounter))
+	MP.SendChatMessage(-1, tostring(countdownCounter))
 	countdownCounter = countdownCounter - 1
 	if countdownCounter == 0 then
-		SendChatMessage(-1, "Go!")								--send chat
+		MP.SendChatMessage(-1, "Go!")								--send chat
 		points = {}
-		for k, v in pairs(GetPlayers()) do points[v] = 0 end	--clear scores
+		for k, v in pairs(MP.GetPlayers()) do points[v] = 0 end	--clear scores
 		clog("Cleared scores, starting game")
 		--StopThread("doCountdown")								--stop this funkyness
-		CreateThread("updateScoreboard", 10)					--start scorekeeping timer
+		MP.RegisterEvent("updateScoreboardEvent", "updateScoreboard")
+		MP.CreateEventTimer("updateScoreboardEvent", 30)					--start scorekeeping timer
 	end
 end
 
 function startCountdown()
-	SendChatMessage(-1, "CtF starting in...")
+	MP.SendChatMessage(-1, "CtF starting in...")
 	countdownCounter = 5
 	flagCarrierID = nil
 	flagCarrierName = nil
-	CreateThread("doCountdown", 1)
+	MP.RegisterEvent("countdownEvent", "doCountdown")
+	MP.CreateEventTimer("countdownEvent", 30)
 
-	TriggerClientEvent(-1, "CtFrestartGame", tostring(countdownCounter))
+	MP.TriggerClientEvent(-1, "CtFrestartGame", tostring(countdownCounter))
 	sendConfig()
 end
 
 function onChatMessage(playerID, name ,chatMessage)
-	chatMessage = chatMessage:sub(2)
+	chatMessage = chatMessage:sub(1)
 	clog(name.." said: "..chatMessage, true)
 
 	if chatMessage:find("/startctf") then
 		clog("player "..name.." started CtF", true)
 		startCountdown()
+		return 1
+	elseif starts_with(chatMessage, "/help") then
+		MP.SendChatMessage(playerID, "/startctf				[CTF] Start a ctf round")
+		MP.SendChatMessage(playerID, "/setwin [winPoint]	[CTF] Set the number of point needed to win (default: "..winPoints..")")
+		MP.SendChatMessage(playerID, "/setdmg [dmg]			[CTF] Set the damage treshold to drop the flag (default: "..config.dropDamageTresh..")")
+		MP.SendChatMessage(playerID, "/setflag 				[CTF] Set the flag spawnpoint")
 		return 1
 	elseif starts_with(chatMessage, "/setwin ") then
 		winPoints = tonumber(chatMessage:gsub("/setwin ", ""))
@@ -191,7 +199,7 @@ function onChatMessage(playerID, name ,chatMessage)
 		return 1
 	elseif starts_with(chatMessage, "/setflag") then
 		clog("player "..name.." wants to set the flag spawnpoint, requesting from client", true)
-		TriggerClientEvent(playerID, "CtFflagSpawnRequest", "")
+		MP.TriggerClientEvent(playerID, "CtFflagSpawnRequest", "")
 		return 1
 	end
 end
@@ -200,7 +208,7 @@ function onPlayerDisconnect(playerID)
 	if flagCarrierID ~= playerID then return end
 
 	clog(printNameWithID(playerID).." disconnected while carrying the flag, dropping it")
-	TriggerClientEventForAllExcept(playerID, "CtFremoteDroppedFlag", playerID)
+	MP.TriggerClientEventForAllExcept(playerID, "CtFremoteDroppedFlag", playerID)
 end
 function onVehicleSpawn(playerID, vehicleID, vehicleData)
 	clog("Vehicle Spawned "..playerID.." "..vehicleID, true)
@@ -212,14 +220,14 @@ function onVehicleDeleted(playerID, vehicleID)
 	if flagCarrierID ~= playerID then return end
 
 	clog(printNameWithID(playerID).." deleted a vehicle while carrying the flag, dropping it")
-	TriggerClientEventForAllExcept(playerID, "CtFremoteDroppedFlag", vehicleID)
+	MP.TriggerClientEventForAllExcept(playerID, "CtFremoteDroppedFlag", vehicleID)
 end
 
 
-function TriggerClientEventForAllExcept(excludeID, eventName, eventData)
-	for k,v in pairs(GetPlayers()) do
+function MP.TriggerClientEventForAllExcept(excludeID, eventName, eventData)
+	for k,v in pairs(MP.GetPlayers()) do
 		if k ~= excludeID then
-			TriggerClientEvent(k, eventName, eventData)
+			MP.TriggerClientEvent(k, eventName, eventData)
 		end
 	end
 end
@@ -264,7 +272,7 @@ function printNameWithID(playerID)
 		simpletraceback(2)
 		simpletraceback(3)
 	end
-	return (GetPlayerName(playerID) or '?').."("..playerID..")" 
+	return (MP.GetPlayerName(playerID) or '?').."("..playerID..")" 
 end
 function starts_with(str, start)
    return str:sub(1, #start) == start
