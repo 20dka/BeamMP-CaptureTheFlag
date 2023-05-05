@@ -39,7 +39,6 @@ local inactiveColor = Point4F(0.1,0.1,0.1, 1)
 local activeColor = Point4F(1,1,0, 1)
 local wonColor = Point4F(0,1,0, 1)
 
-local pickupTimes = { localResetCar = 10, remoteResetCar = 5, remoteTookFlag = 3, localDroppedFlag = 5, remoteDroppedFlag = 0, gameStart = 5 }
 
 -- Helpers
 
@@ -99,13 +98,13 @@ local function drawScoreboard()
 	local thisUser = MPConfig and MPConfig.getNickname() or ""
 	local carrierUser = flagCarrier and MPVehicleGE and MPVehicleGE.getNicknameMap()[flagCarrier:getID()] or "not found"
 
-
-	imgui.Columns(2, "Bar") -- gimme ein táblázat
-
-	if flagCarrier then
-		imgui.Text("Flagcarrier damage:") imgui.NextColumn() imgui.Text(tostring(map.objects[flagCarrier:getID()].damage)) imgui.NextColumn()
+	if carrierUser == "not found" and flagCarrier and MPVehicleGE then -- compatibility with older, more fucky wucky version
+		for k,v in pairs(MPVehicleGE.getNicknameMap()) do
+			if tonumber(k) == flagCarrier:getID() then carrierUser = v end
+		end
 	end
 
+	imgui.Columns(2, "Bar") -- gimme ein táblázat
 	for name, points in spairs(scoreboardData, function(t,a,b) return t[b] < t[a] end) do
 		if name == thisUser then imgui.TextColored(imgui.ImVec4(0.0, 1.0, 1.0, 1.0), name) --teal if current user
 		elseif name == carrierUser then imgui.TextColored(imgui.ImVec4(1.0, 1.0, 0.0, 1.0), name) --yellow if carrier
@@ -127,23 +126,22 @@ end
 local function hideNicknames(hide)
 	if toggleNametags then MPVehicleGE.hideNicknames(hide) end
 end
-local function dropFlag(dropCoords, isLocal, pickupTimeout)
+local function dropFlag(localDrop, pickupTimeout)
 	if flagCarrier then
-		if isLocal then
+		if localDrop then
 			log("I","CtF", "DropFlagLocal "..tostring(flagCarrierID))
-			--TriggerServerEvent("CtFflagDropped", tostring( MPVehicleGE.getServerVehicleID(flagCarrier:getID())))
+			TriggerServerEvent("CtFflagDropped", tostring( MPVehicleGE.getServerVehicleID(flagCarrier:getID())))
 		else
-			canPickUpFlagTime = timeCounter + (pickupTimeout or 5)
+			canPickUpFlagTime = timeCounter
 		end
 
 		flagCarrier.color = inactiveColor
-		--flagPos = flagCarrierPos or flagCarrier:getPosition()
+		flagPos = flagCarrierPos or flagCarrier:getPosition()
 	elseif not flagPos then
-		--flagPos = flagSpawnPoint
+		flagPos = flagSpawnPoint
 	end
 
-	flagPos = Point3F(dropCoords.x, dropCoords.y, dropCoords.z)
-	canPickUpFlagTime = timeCounter + (pickupTimeout or 5)
+	canPickUpFlagTime = timeCounter + pickupTimeout or 5
 
 	flagCarrierDamage = 0
 	flagCarrier = nil
@@ -157,25 +155,25 @@ local function onUpdate(dt)
 
 	if flagPos then --flag is on the ground
 		local flagPosTop = Point3F(flagPos.x, flagPos.y, flagPos.z+2+mapValue(math.sin(timeCounter*1.5),0,1,0,0.5))
-		local flagPosBottom = Point3F(flagPos.x, flagPos.y, flagPos.z-2+mapValue(math.sin(timeCounter*1.5),0,1,0,0.5))
+		local flagPosBottom = Point3F(flagPos.x, flagPos.y, mapValue(math.sin(timeCounter*1.5),0,1,0,0.5))
 
-		if timeCounter > canPickUpFlagTime then -- can pick up
+		if canPickUpFlagTime < timeCounter then
 			debugDrawer:drawCylinder(flagPosBottom, flagPosTop, flagRadius, ColorF(0.6,0,0.7,0.5))
 			for i = 0, be:getObjectCount()-1 do
 				local veh = be:getObject(i)
 				if MPVehicleGE.isOwn(veh:getID()) and distance2D(veh:getPosition(), flagPos) < flagRadius*1.5 then --flag picked up
-					--flagCarrier = veh
-					--flagPos = nil
-					--flagCarrierDamage = map.objects[flagCarrier:getID()].damage
-					--flagCarrier.color = activeColor
-					--canPickUpFlagTime = timeCounter + 3
-					log("I", "CtF.LOCAL","Vehicle "..veh:getID().." picked up the flag at "..string.format("%.2f s", timeCounter))
-					TriggerServerEvent("CtFflagPickedUp", MPVehicleGE.getServerVehicleID(veh:getID()))
-					--hideNicknames(true)
+					flagCarrier = veh
+					flagPos = nil
+					flagCarrierDamage = map.objects[flagCarrier:getID()].damage
+					flagCarrier.color = activeColor
+					canPickUpFlagTime = timeCounter + 3
+					log("I", "CtF","Vehicle "..flagCarrier:getID().." picked up the flag at "..string.format("%.2f s", timeCounter))
+					TriggerServerEvent("CtFflagPickedUp", tostring( MPVehicleGE.getServerVehicleID(flagCarrier:getID())))
+					hideNicknames(true)
 					return
 				end
 			end
-		else -- can't pick it up yet
+		else
 			debugDrawer:drawCylinder(flagPosBottom, flagPosTop, flagRadius, ColorF(0,0.6,0.7,0.5))
 		end
 	end
@@ -193,50 +191,63 @@ local function onUpdate(dt)
 		end
 
 		if canPickUpFlagTime < timeCounter then
-			if MPVehicleGE.isOwn(flagCarrierID) and map.objects[flagCarrierID].damage > flagCarrierDamage+dropDamageTresh then
-				log("I", "CtF.LOCAL","Vehicle "..flagCarrierID.." dropped the flag (damage) at "..string.format("%.2f s", timeCounter))
-				TriggerServerEvent("CtFflagDropped", jsonEncode({coords={x=pos.x,y=pos.y,z=pos.z},serverVehID=MPVehicleGE.getServerVehicleID(flagCarrierID),reason="DroppedFlag"}):gsub(':',';'))
-				return
-			end
 			flagCarrierDamage = map.objects[flagCarrierID].damage
 
+			isASoloCrash = true
+
 			for k,_ in pairs(map.objects[flagCarrierID].objectCollisions) do
-				if  MPVehicleGE.isOwn(k) then
-					local collidedVeh = be:getObjectByID(k)
-					local collidedVehPos = collidedVeh:getPosition()
-					if distance2D(pos, collidedVehPos) < 6 then -- flag taken from player -- to avoid false hits from dropped car parts
-						--flagCarrier.color = inactiveColor
-						log("I", "CtF.LOCAL","Vehicle "..k.." took the flag from "..flagCarrierID..string.format(" at %.2f s", timeCounter))
-						--flagCarrier = collidedVeh
-						--flagCarrierDamage = map.objects[flagCarrier:getID()].damage
-						--flagCarrier.color = activeColor
-						--canPickUpFlagTime = timeCounter + 3
-						TriggerServerEvent("CtFflagExchanged", MPVehicleGE.getServerVehicleID(flagCarrierID))
-						--hideNicknames(true)
+				if not MPVehicleGE.isOwn(flagCarrierID) then -- if we are not the flag carrier
+					if MPVehicleGE.isOwn(k) then
+						local collidedVeh = be:getObjectByID(k)
+						local collidedVehPos = collidedVeh:getPosition()
+						if distance2D(pos, collidedVehPos) < 6 then -- flag taken from player -- to avoid false hits from dropped car parts
+							flagCarrier.color = inactiveColor
+							log("I", "CtF","Vehicle "..collidedVeh:getID().." took the flag from "..flagCarrier:getID()..string.format("at %.2f s", timeCounter))
+							flagCarrier = collidedVeh
+							flagCarrier.color = activeColor
+							canPickUpFlagTime = timeCounter + 3
+							TriggerServerEvent("CtFflagExchanged", tostring( MPVehicleGE.getServerVehicleID(flagCarrier:getID())))
+							hideNicknames(true)
+							return
+						end
+					end
+				else -- if we are the flag carrier
+					if not MPVehicleGE.isOwn(k) then -- get the car of the stealer if it's not a solo crash
+						local collidedVeh = be:getObjectByID(k)
+						local collidedVehPos = collidedVeh:getPosition()
+						if distance2D(pos, collidedVehPos) < 6 then
+							isASoloCrash = false
+							break
+						end
 					end
 				end
+			end
+
+			if isASoloCrash and map.objects[flagCarrierID].damage > flagCarrierDamage+dropDamageTresh then
+				dropFlag(true, 5)
+				return
 			end
 		end
 	end
 end
 
 local function onVehicleResetted(gameVehicleID)
-	if not gameRunning then return end
-	if not MPVehicleGE.isOwn(gameVehicleID) then return end
-	if not flagCarrier then return end
-	if flagCarrier:getID() ~= gameVehicleID then return end
+	--if not gameRunning then return end
+	--if not MPVehicleGE.isOwn(tostring(gameVehicleID)) then return end
+	--if not flagCarrier then return end
+	--if flagCarrier:getID() ~= gameVehicleID then return end
+	if gameRunning and MPVehicleGE.isOwn(gameVehicleID) then
+		--TriggerServerEvent("CtFremovePoints", tostring(MPVehicleGE.getServerVehicleID(gameVehicleID)))
+	else return end
 
-	--log("I", "CtF", "Reset and dropped the flag")
-	log("I", "CtF.LOCAL","Vehicle "..gameVehicleID.." dropped the flag (reset) at "..string.format("%.2f s", timeCounter))
+	if not (flagCarrier and flagCarrier:getID() == gameVehicleID) then return end
 
-	--local veh = be:getObjectByID(gameVehicleID)
-	local pos = flagCarrierPos --veh:getPosition() (use last frame's position)
-	local data = { coords = { x = pos.x, y = pos.y, z = pos.z }, serverVehID = MPVehicleGE.getServerVehicleID(gameVehicleID), reason = "ResetCar" }
-
-	TriggerServerEvent("CtFflagDropped", jsonEncode(data):gsub(':',';'))
-	TriggerServerEvent("CtFremovePoints", data.serverVehID)
-	--dropFlag(true, 10)
+	log("I", "CtF", "Reset and dropped the flag")
+	TriggerServerEvent("CtFremovePoints", tostring(MPVehicleGE.getServerVehicleID(gameVehicleID)))
+	--TriggerServerEvent("CtFflagDropped", tostring(MPVehicleGE.getServerVehicleID(gameVehicleID)))
+	dropFlag(true, 10)
 end
+
 
 
 local function setFlagSpawn(rawData)
@@ -279,67 +290,40 @@ end
 local function remotePickedUpFlag(serverVehID)
 	if serverVehID:sub(1,1) == ":" then serverVehID = serverVehID:sub(2) end -- cut off the leading :
 
-	local newFlagCarrierID = MPVehicleGE.getGameVehicleID(serverVehID)
-	local newFlagCarrier = be:getObjectByID(newFlagCarrierID)
-
-	local isLocal = MPVehicleGE.isOwn(newFlagCarrierID)
-
-	local newFlagCarrierNick = (isLocal and 'You' or MPVehicleGE.getNicknameMap()[newFlagCarrierID]) or 'Unknown'
-
-	guihooks.trigger('toastrMsg', {type="info", title = 'King of the Hill', msg = string.format("%s picked up the flag", newFlagCarrierNick), config = {timeOut = 2000}})
-	log("I", "CtF.remote","Vehicle "..newFlagCarrierID.." picked up the flag at "..string.format("%.2f s", timeCounter))
+	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehID)
+	local newFlagCarrier = be:getObjectByID(gameVehicleID)
 
 	if flagCarrier then flagCarrier.color = inactiveColor end
 
+	log("I", "CtF.remote","Vehicle "..gameVehicleID.." picked up the flag at "..string.format("%.2f s", timeCounter))
 	flagPos = nil
 	flagCarrier = newFlagCarrier
-	flagCarrierDamage = map.objects[newFlagCarrierID].damage
+	flagCarrierDamage = map.objects[tonumber(gameVehicleID)].damage
 	flagCarrier.color = activeColor
-	canPickUpFlagTime = timeCounter + pickupTimes.remoteTookFlag
-	hideNicknames(isLocal)
+	canPickUpFlagTime = timeCounter + 5
+	hideNicknames(false)
 end
 
 local function remoteExchangedFlag(serverVehID)
 	if serverVehID:sub(1,1) == ":" then serverVehID = serverVehID:sub(2) end -- cut off the leading :
 
-	local oldFlagCarrierID = flagCarrier and flagCarrier:getID() or -1
-	local newFlagCarrierID = MPVehicleGE.getGameVehicleID(serverVehID)
-	local newFlagCarrier = be:getObjectByID(newFlagCarrierID)
-
-	local nicknameMap = MPVehicleGE.getNicknameMap()
-	local oldFlagCarrierNick = (MPVehicleGE.isOwn(oldFlagCarrierID) and 'You' or nicknameMap[oldFlagCarrierID]) or 'Unknown'
-	local newFlagCarrierNick = (MPVehicleGE.isOwn(newFlagCarrierID) and 'You' or nicknameMap[newFlagCarrierID]) or 'Unknown'
-
-	guihooks.trigger('toastrMsg', {type="info", title = 'King of the Hill', msg = string.format("%s took the flag from %s", newFlagCarrierNick, oldFlagCarrierNick), config = {timeOut = 2000}})
-	log("I", "CtF.remote", string.format("Vehicle %s took the flag from %s at %.2f s", newFlagCarrierID, oldFlagCarrierID, timeCounter))
+	local gameVehicleID = MPVehicleGE.getGameVehicleID(serverVehID)
+	local newFlagCarrier = be:getObjectByID(gameVehicleID)
 
 	if flagCarrier then flagCarrier.color = inactiveColor end
 
+	log("I", "CtF.remote","Vehicle "..gameVehicleID.." took the flag from "..flagCarrier:getID().." at "..string.format("%.2f s", timeCounter))
 	flagPos = nil
 	flagCarrier = newFlagCarrier
-	flagCarrierDamage = map.objects[newFlagCarrierID].damage
+	flagCarrierDamage = map.objects[tonumber(gameVehicleID)].damage
 	flagCarrier.color = activeColor
-	canPickUpFlagTime = timeCounter + pickupTimes.remoteTookFlag
-	hideNicknames(MPVehicleGE.isOwn(newFlagCarrierID))
+	canPickUpFlagTime = timeCounter + 3
+	hideNicknames(false)
 end
 
-local function remoteDroppedFlag(data)
-	data = data:gsub(';',':')
-	data = jsonDecode(data)
-
-	local newFlagCarrierID = MPVehicleGE.getGameVehicleID(data.serverVehID)
-	local newFlagCarrier = be:getObjectByID(newFlagCarrierID)
-	local isLocal = MPVehicleGE.isOwn(newFlagCarrierID)
-
-	local nicknameMap = MPVehicleGE.getNicknameMap()
-	local newFlagCarrierNick = isLocal and 'You' or nicknameMap[newFlagCarrierID] or 'Unknown'
-
-	guihooks.trigger('toastrMsg', {type="warning", title = 'King of the Hill', msg = string.format("%s dropped the flag!", newFlagCarrierNick), config = {timeOut = 2000}})
-	log("I", "CtF.remote", string.format("Vehicle %s dropped the flag at %.2f s", newFlagCarrierID, timeCounter))
-
-	local timeout = pickupTimes[ (isLocal and "local" or "remote") .. data.reason ]
-
-	dropFlag(data.coords, false, timeout)
+local function remoteDroppedFlag(serverVehID)
+	log("I","CtF", "DropFlagRemote "..tostring(flagCarrierID));
+	dropFlag(false, 3)
 end
 
 local function receiveScoreboard(rawData)
@@ -359,7 +343,7 @@ local function startGame(countdown)
 
 	flagPos = flagSpawnPoint
 
-	canPickUpFlagTime = timeCounter + (pickupTimes.gameStart or 10)
+	canPickUpFlagTime = timeCounter + (tonumber(countdown) or 10)
 	flagCarrierDamage = 0
 	flagCarrier = nil
 	showScoreboard()
@@ -372,7 +356,6 @@ local function playerWon(winnerName)
 	log("I", "CtF.remote","Player "..winnerName.." has won the game")
 	if flagCarrier then flagCarrier.color = wonColor end
 	flagPos = nil
-	guihooks.trigger('toastrMsg', {type="success", title = 'King of the Hill', msg = "🎉 "..winnerName.." has won the game!", config = {timeOut = 2000}})
 	UI.showNotification("🎉 "..winnerName.." has won the game! 🎉", "CtFwon")
 	gameRunning = false
 	hideNicknames(false)
@@ -393,8 +376,6 @@ local function setConfig(config)
 	inactiveColor = config.inactiveColor and Point4F(config.inactiveColor.r, config.inactiveColor.g, config.inactiveColor.b, 1) or inactiveColor
 	activeColor = config.activeColor and Point4F(config.activeColor.r, config.activeColor.g, config.activeColor.b, 1) or activeColor
 	wonColor = config.wonColor and Point4F(config.wonColor.r, config.wonColor.g, config.wonColor.b, 1) or wonColor
-
-	pickupTimes = config.pickupTimes or pickupTimes
 end
 
 if MPGameNetwork then -- just so we dont instantly error out without BeamMP
@@ -408,6 +389,7 @@ if MPGameNetwork then -- just so we dont instantly error out without BeamMP
 	AddEventHandler("CtFreceiveScoreboard",		receiveScoreboard)
 	AddEventHandler("CtFrestartGame",			startGame)
 	AddEventHandler("CtFplayerWon",				playerWon)
+	AddEventHandler("CtFhideUI",				hideScoreboard)
 end
 
 
